@@ -4,7 +4,7 @@ import json
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .domain import (ConflictError, DomainError, NotFoundError, PermissionDenied,
                      ValidationError)
@@ -71,7 +71,11 @@ def make_handler(service: Service, static_dir: str):
                 status = 400
             else:
                 status = 500
-            self._json(status, {"error": exc.__class__.__name__, "message": str(exc)})
+            payload = {"error": exc.__class__.__name__, "message": str(exc)}
+            code = getattr(exc, "code", None)
+            if code:
+                payload["code"] = code
+            self._json(status, payload)
 
         def do_GET(self) -> None:
             try:
@@ -98,6 +102,17 @@ def make_handler(service: Service, static_dir: str):
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"events": service.audit(role)})
+                elif path.startswith("/api/repair-batches/"):
+                    actor, role = self._identity()
+                    del actor
+                    batch_no = unquote(path.rsplit("/", 1)[-1])
+                    self._json(200, service.get_repair_batch(batch_no, role))
+                elif path == "/api/repair-batches":
+                    actor, role = self._identity()
+                    del actor
+                    query = parse_qs(urlparse(self.path).query)
+                    status = query.get("status", [None])[0]
+                    self._json(200, {"batches": service.list_repair_batches(role, status)})
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
@@ -110,6 +125,16 @@ def make_handler(service: Service, static_dir: str):
                 body = self._body()
                 if path == "/api/items":
                     self._json(201, service.create_item(body, actor, role))
+                elif path == "/api/repair-batches":
+                    self._json(201, service.start_repair_batch(body, actor, role))
+                elif path.startswith("/api/repair-batches/") and path.endswith("/confirm"):
+                    batch_no = unquote(path.split("/")[3])
+                    self._json(200, service.confirm_repair_batch(batch_no, actor, role))
+                elif path.startswith("/api/repair-batches/") and path.endswith("/apply"):
+                    batch_no = unquote(path.split("/")[3])
+                    payload = dict(body)
+                    payload.setdefault("batch_no", batch_no)
+                    self._json(200, service.apply_repair_batch(payload, actor, role))
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     self._json(201, service.add_record(item_id, body, actor, role))

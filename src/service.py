@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from .domain import ensure_role, normalize_severity, require_number, require_text
+from .domain import (ValidationError, ensure_role, normalize_severity,
+                     require_number, require_text)
 from .repository import Repository
-from .rules import (AUDIT_ROLES, CREATE_ROLES, ENTITY, RECORD_ROLES, TITLE,
-                    VIEW_ROLES, completion_blockers, escalation_required,
-                    priority_score, response_deadline_hours, role_for_transition,
-                    validate_transition)
+from .rules import (AUDIT_ROLES, CREATE_ROLES, ENTITY, RECORD_ROLES,
+                    REPAIR_APPLY_ROLES, REPAIR_CONFIRM_ROLES, REPAIR_START_ROLES,
+                    STATES, TITLE, TERMINAL_STATES, VIEW_ROLES, completion_blockers,
+                    escalation_required, priority_score, response_deadline_hours,
+                    role_for_transition, validate_transition)
 
 
 class Service:
@@ -64,6 +66,10 @@ class Service:
         if not isinstance(expected_version, int) or expected_version < 1:
             raise ValueError("expected_version必须是正整数")
         blockers = completion_blockers(target, self.repository.open_record_count(item_id))
+        if target in TERMINAL_STATES:
+            repair = self.repository.active_repair_batch_for_item(item_id)
+            if repair is not None:
+                blockers.append(f"受影响指令已暂停关闭，修复批次{repair['batch_no']}待完成")
         if blockers:
             from .domain import ConflictError
             raise ConflictError("；".join(blockers))
@@ -90,6 +96,37 @@ class Service:
     def audit(self, role: str, item_id: Optional[int] = None) -> list:
         ensure_role(role, AUDIT_ROLES)
         return self.repository.list_audit(item_id)
+
+    def start_repair_batch(self, payload: Dict[str, Any], actor: str, role: str) -> Dict[str, Any]:
+        ensure_role(role, REPAIR_START_ROLES)
+        actor = require_text(actor, "actor", 100)
+        batch_no = payload.get("batch_no", payload.get("batch_id"))
+        batch_no = require_text(batch_no, "batch_no", 100)
+        return self.repository.start_repair_batch(batch_no, actor)
+
+    def confirm_repair_batch(self, batch_no: str, actor: str, role: str) -> Dict[str, Any]:
+        ensure_role(role, REPAIR_CONFIRM_ROLES)
+        actor = require_text(actor, "actor", 100)
+        batch_no = require_text(batch_no, "batch_no", 100)
+        return self.repository.confirm_repair_batch(batch_no, role, actor)
+
+    def apply_repair_batch(self, payload: Dict[str, Any], actor: str, role: str) -> Dict[str, Any]:
+        ensure_role(role, REPAIR_APPLY_ROLES)
+        actor = require_text(actor, "actor", 100)
+        batch_no = payload.get("batch_no", payload.get("batch_id"))
+        batch_no = require_text(batch_no, "batch_no", 100)
+        return self.repository.apply_repair_batch(batch_no, actor)
+
+    def get_repair_batch(self, batch_no: str, role: str) -> Dict[str, Any]:
+        self._view(role)
+        batch_no = require_text(batch_no, "batch_no", 100)
+        return self.repository.get_repair_batch_by_no(batch_no)
+
+    def list_repair_batches(self, role: str, status: Optional[str] = None) -> list:
+        self._view(role)
+        if status is not None and status not in ("open", "ready", "applied"):
+            raise ValidationError("status必须是open、ready或applied")
+        return self.repository.list_repair_batches(status)
 
     @staticmethod
     def enrich(item: Dict[str, Any]) -> Dict[str, Any]:
