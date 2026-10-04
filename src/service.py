@@ -4,10 +4,11 @@ from typing import Any, Dict, Optional
 
 from .domain import ensure_role, normalize_severity, require_number, require_text
 from .repository import Repository
-from .rules import (AUDIT_ROLES, CREATE_ROLES, ENTITY, RECORD_ROLES, TITLE,
-                    VIEW_ROLES, completion_blockers, escalation_required,
-                    priority_score, response_deadline_hours, role_for_transition,
-                    validate_transition)
+from .rules import (AUDIT_ROLES, CONFIRM_ROLES, CREATE_ROLES, DETECT_ROLES,
+                    ENTITY, RECORD_ROLES, REPAIR_ROLES, TITLE, VIEW_ROLES,
+                    completion_blockers, escalation_required, priority_score,
+                    quarantine_blockers, response_deadline_hours,
+                    role_for_transition, validate_transition)
 
 
 class Service:
@@ -64,9 +65,12 @@ class Service:
         if not isinstance(expected_version, int) or expected_version < 1:
             raise ValueError("expected_version必须是正整数")
         blockers = completion_blockers(target, self.repository.open_record_count(item_id))
-        if blockers:
+        quarantine = self.repository.count_unrepaired_quarantine(item_id)
+        q_blockers = quarantine_blockers(target, quarantine)
+        all_blockers = blockers + q_blockers
+        if all_blockers:
             from .domain import ConflictError
-            raise ConflictError("；".join(blockers))
+            raise ConflictError("；".join(all_blockers))
         updated = self.repository.transition_item(item_id, target, expected_version, actor)
         self.repository.append_audit("transition", ENTITY, item_id, actor, {
             "from": item["status"], "to": target,
@@ -90,6 +94,33 @@ class Service:
     def audit(self, role: str, item_id: Optional[int] = None) -> list:
         ensure_role(role, AUDIT_ROLES)
         return self.repository.list_audit(item_id)
+
+    def create_repair_batch(self, actor: str, role: str) -> Dict[str, Any]:
+        ensure_role(role, DETECT_ROLES)
+        actor = require_text(actor, "actor", 100)
+        return self.repository.create_repair_batch(actor)
+
+    def list_repair_batches(self, role: str) -> list:
+        self._view(role)
+        return self.repository.list_repair_batches()
+
+    def get_repair_batch(self, batch_no: str, role: str) -> Dict[str, Any]:
+        self._view(role)
+        batch = self.repository.get_repair_batch(batch_no)
+        if batch is None:
+            from .domain import NotFoundError
+            raise NotFoundError("修复批次不存在")
+        return batch
+
+    def confirm_repair_batch(self, batch_no: str, actor: str, role: str) -> Dict[str, Any]:
+        ensure_role(role, CONFIRM_ROLES)
+        actor = require_text(actor, "actor", 100)
+        return self.repository.confirm_repair_batch(batch_no, role, actor)
+
+    def execute_repair(self, batch_no: str, actor: str, role: str) -> Dict[str, Any]:
+        ensure_role(role, REPAIR_ROLES)
+        actor = require_text(actor, "actor", 100)
+        return self.repository.execute_repair(batch_no, actor)
 
     @staticmethod
     def enrich(item: Dict[str, Any]) -> Dict[str, Any]:

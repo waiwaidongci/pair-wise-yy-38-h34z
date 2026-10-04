@@ -31,8 +31,15 @@ python3 app.py --db ./data.db --port 8315
 - `POST /api/items/{id}/records`
 - `POST /api/items/{id}/transition`，必须提交`expected_version`
 - `GET /api/audit`
+- `GET /api/repair-batches`
+- `POST /api/repair-batches`，定位首个断点并隔离其后的审计事件
+- `GET /api/repair-batches/{batch_no}`
+- `POST /api/repair-batches/{batch_no}/confirm`，总工或纪检确认范围
+- `POST /api/repair-batches/{batch_no}/repair`，从最后一个有效哈希续写修复事件并接回未损坏记录
 
-允许角色：duty_officer, chief_engineer, dispatcher, viewer。库位超过汛限或入库流量上升时提升紧迫度；授权前必须有复核记录，执行后仍要闭环现场反馈。
+允许角色：duty_officer, chief_engineer, dispatcher, discipline_inspector, viewer。库位超过汛限或入库流量上升时提升紧迫度；授权前必须有复核记录，执行后仍要闭环现场反馈。
+
+审计链抽查发现记录被篡改时，创建修复批次：先定位首个断点，把断点及之后的事件隔离到独立的 `quarantined_events` 表（审计事件只追加不改写），受影响指令暂停关闭、其余照常；总工（chief_engineer）和纪检（discipline_inspector）分别确认范围后，从最后一个有效哈希续写修复事件，把未损坏的隔离记录接回。写入失败按批次号幂等重试；两人同时提交同一批次时先到生效，后到看到缺口。
 
 ## 测试
 

@@ -98,6 +98,15 @@ def make_handler(service: Service, static_dir: str):
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"events": service.audit(role)})
+                elif path == "/api/repair-batches":
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"batches": service.list_repair_batches(role)})
+                elif path.startswith("/api/repair-batches/"):
+                    batch_no = path.split("/")[3]
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, service.get_repair_batch(batch_no, role))
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
@@ -119,6 +128,14 @@ def make_handler(service: Service, static_dir: str):
                     expected = body.get("expected_version")
                     self._json(200, service.transition(
                         item_id, target, expected, actor, role))
+                elif path == "/api/repair-batches":
+                    self._json(201, service.create_repair_batch(actor, role))
+                elif path.startswith("/api/repair-batches/") and path.endswith("/confirm"):
+                    batch_no = path.split("/")[3]
+                    self._json(200, service.confirm_repair_batch(batch_no, actor, role))
+                elif path.startswith("/api/repair-batches/") and path.endswith("/repair"):
+                    batch_no = path.split("/")[3]
+                    self._json(200, service.execute_repair(batch_no, actor, role))
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:

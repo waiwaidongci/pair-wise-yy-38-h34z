@@ -26,3 +26,16 @@ def make_entry(action: str, entity_type: str, entity_id: int, actor: str,
     }
     return dict(payload, previous_hash=previous_hash,
                 entry_hash=calculate_hash(previous_hash, payload))
+
+
+def recompute_entry_hash(event: dict) -> str:
+    """按已落库事件的内容重算 entry_hash，用于甄别事件本身是否被篡改。"""
+    payload = {
+        "action": event["action"],
+        "entity_type": event["entity_type"],
+        "entity_id": event["entity_id"],
+        "actor": event["actor"],
+        "detail": event["detail"],
+        "created_at": event["created_at"],
+    }
+    return calculate_hash(event["previous_hash"], payload)
